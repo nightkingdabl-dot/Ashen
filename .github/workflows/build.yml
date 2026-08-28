@@ -14,6 +14,7 @@ jobs:
       - name: Find and unpack Android project
         run: |
           rm -rf project
+
           ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP" ]; then
@@ -22,21 +23,32 @@ jobs:
             exit 1
           fi
 
-          echo "Found: $ZIP"
+          echo "Found ZIP: $ZIP"
+
           mkdir project
           unzip -q "$ZIP" -d project
 
           echo "Project contents:"
-          find project -maxdepth 2 -type f | head -50
+          find project -maxdepth 3 -type f | sort | head -100
 
       - name: Find project root
         run: |
-          if [ -f "project/settings.gradle" ] || [ -f "project/settings.gradle.kts" ]; then
-            echo "PROJECT_DIR=project" >> $GITHUB_ENV
-          else
-            ROOT=$(find project -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs dirname)
-            echo "PROJECT_DIR=$ROOT" >> $GITHUB_ENV
+          SETTINGS=$(find project -type f \( \
+            -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+          \) -print -quit)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found"
+            echo "Files inside project:"
+            find project -maxdepth 5 -type f | sort
+            exit 1
           fi
+
+          ROOT=$(dirname "$SETTINGS")
+
+          echo "Android project root: $ROOT"
+          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -49,16 +61,31 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Build debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          gradle assembleDebug --stacktrace
+
+      - name: Find APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "Searching for APK..."
+          find app/build/outputs -type f -name "*.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ASHEN-debug-apk
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
