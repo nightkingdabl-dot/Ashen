@@ -13,26 +13,50 @@ jobs:
 
       - name: Find and unpack Android project
         run: |
+          set -e
+
           rm -rf project
+          mkdir -p project
 
-          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+          echo "Files in repository:"
+          ls -lah
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: Android project ZIP not found"
-            ls -la
+          OUTER_ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
+
+          if [ -z "$OUTER_ZIP" ]; then
+            echo "ERROR: No ZIP file found in repository"
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP"
+          echo "Outer ZIP: $OUTER_ZIP"
 
-          mkdir project
-          unzip -q "$ZIP" -d project
+          unzip -q "$OUTER_ZIP" -d project
 
-          echo "Project contents:"
-          find project -maxdepth 3 -type f | sort | head -100
+          echo ""
+          echo "After unpacking outer ZIP:"
+          find project -maxdepth 3 -type f | sort
+
+          INNER_ZIP=$(find project -type f -iname "*.zip" -print -quit)
+
+          if [ -n "$INNER_ZIP" ]; then
+            echo ""
+            echo "Found inner ZIP: $INNER_ZIP"
+
+            mkdir -p project/android_project
+            unzip -q "$INNER_ZIP" -d project/android_project
+
+            echo ""
+            echo "Android project extracted:"
+            find project/android_project -maxdepth 4 -type f | sort | head -150
+          else
+            echo ""
+            echo "No inner ZIP found. Using outer ZIP contents."
+          fi
 
       - name: Find project root
         run: |
+          set -e
+
           SETTINGS=$(find project -type f \( \
             -name "settings.gradle" \
             -o -name "settings.gradle.kts" \
@@ -40,14 +64,20 @@ jobs:
 
           if [ -z "$SETTINGS" ]; then
             echo "ERROR: settings.gradle not found"
-            echo "Files inside project:"
-            find project -maxdepth 5 -type f | sort
+            echo ""
+            echo "All files found:"
+            find project -maxdepth 7 -type f | sort
             exit 1
           fi
 
           ROOT=$(dirname "$SETTINGS")
 
-          echo "Android project root: $ROOT"
+          echo ""
+          echo "======================================"
+          echo "Android project root:"
+          echo "$ROOT"
+          echo "======================================"
+
           echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
 
       - name: Set up Java
@@ -62,6 +92,7 @@ jobs:
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --licenses > /dev/null || true
+
           sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
@@ -75,13 +106,14 @@ jobs:
       - name: Build debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          echo "Building Android project..."
           gradle assembleDebug --stacktrace
 
       - name: Find APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           echo "Searching for APK..."
-          find app/build/outputs -type f -name "*.apk" -print
+          find . -type f -name "*.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
