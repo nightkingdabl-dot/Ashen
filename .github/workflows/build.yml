@@ -11,11 +11,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Unpack Android project
+      - name: Find and unpack Android project
         run: |
           rm -rf project
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Android project ZIP not found"
+            ls -la
+            exit 1
+          fi
+
+          echo "Found: $ZIP"
           mkdir project
-          unzip -q ASHEN_ANDROID_PROJECT.zip -d project
+          unzip -q "$ZIP" -d project
+
+          echo "Project contents:"
+          find project -maxdepth 2 -type f | head -50
+
+      - name: Find project root
+        run: |
+          if [ -f "project/settings.gradle" ] || [ -f "project/settings.gradle.kts" ]; then
+            echo "PROJECT_DIR=project" >> $GITHUB_ENV
+          else
+            ROOT=$(find project -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs dirname)
+            echo "PROJECT_DIR=$ROOT" >> $GITHUB_ENV
+          fi
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -27,19 +48,17 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build debug APK
-        working-directory: project
-        run: gradle assembleDebug --no-daemon
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ASHEN-debug-apk
-          path: project/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
